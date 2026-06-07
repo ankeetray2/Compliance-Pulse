@@ -31,7 +31,9 @@ import {
   Clock,
   ArrowRight,
   Info,
-  Download
+  Download,
+  X,
+  ArrowUpDown
 } from "lucide-react";
 import {
   REGULATORY_PRESETS,
@@ -82,6 +84,33 @@ export default function App() {
 
   const [compareCheckedCriteria, setCompareCheckedCriteria] = useState<{ [key: string]: boolean }>({});
   const [compareCopiedTicket, setCompareCopiedTicket] = useState(false);
+
+  // Sorting state for single predictions report
+  const [predictionsSortKey, setPredictionsSortKey] = useState<"days-asc" | "days-desc" | "severity-desc" | "severity-asc">("days-asc");
+
+  // Toast state for real-time compliance alerting
+  const [toasts, setToasts] = useState<{
+    id: string;
+    type: "critical" | "high" | "medium" | "low" | "success" | "info" | "error";
+    title: string;
+    message: string;
+  }[]>([]);
+
+  const addToast = (
+    type: "critical" | "high" | "medium" | "low" | "success" | "info" | "error",
+    title: string,
+    message: string
+  ) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, type, title, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 7000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   // Sync active comparison preset automatically when comparePresetId changes
   useEffect(() => {
@@ -195,6 +224,26 @@ export default function App() {
 
       const data = await response.json();
       setAnalysisResult(data);
+
+      // Trigger toasts for high-severity predicted breaches
+      const highSeverityGaps = data.predictions?.filter(
+        (p: any) => p.breachSeverity === "Critical" || p.breachSeverity === "High"
+      ) || [];
+      if (highSeverityGaps.length > 0) {
+        highSeverityGaps.forEach((p: any) => {
+          addToast(
+            p.breachSeverity.toLowerCase() as any,
+            `${p.breachSeverity.toUpperCase()} BREACH PREDICTED`,
+            `${p.affectedSystem} is in violation of the ${data.delta?.ruleReference || selectedBody} standard within ${p.daysToBreach} days.`
+          );
+        });
+      } else {
+        addToast(
+          "success",
+          "Analysis Completed",
+          "System evaluation successfully finalized. All configurations satisfy incoming guidelines."
+        );
+      }
     } catch (err: any) {
       console.error(err);
       setAnalysisError(err.message || "An unexpected communication error occurred with the AI model.");
@@ -416,6 +465,27 @@ ${ticket.dependencies}
 
       const data = await response.json();
       setComparisonResult(data);
+
+      // Trigger toasts for high-severity predicted breaches in comparison results
+      const highSeverityGaps = data.predictions?.filter(
+        (p: any) => p.newRisk?.severity === "Critical" || p.newRisk?.severity === "High"
+      ) || [];
+      if (highSeverityGaps.length > 0) {
+        highSeverityGaps.forEach((p: any) => {
+          const s = p.newRisk?.severity || "High";
+          addToast(
+            s.toLowerCase() as any,
+            `${s.toUpperCase()} DRIFT DETECTED`,
+            `${p.affectedSystem} escalates to ${s} under the new guidelines. Potential breach in ${p.newRisk?.daysToBreach} days.`
+          );
+        });
+      } else {
+        addToast(
+          "success",
+          "Comparison Complete",
+          "Ruleset progression analyzed. No critical compliance drift detected."
+        );
+      }
     } catch (err: any) {
       console.error(err);
       setCompareError(err.message || "An unexpected error occurred during comparative risk modeling.");
@@ -445,6 +515,40 @@ ${transitionTicket.deltaDependencies}
     navigator.clipboard.writeText(docMd);
     setCompareCopiedTicket(true);
     setTimeout(() => setCompareCopiedTicket(false), 2000);
+  };
+
+  const getSortedPredictions = (predictions: any[]) => {
+    if (!predictions) return [];
+    
+    const severityWeight: { [key: string]: number } = {
+      "Critical": 4,
+      "High": 3,
+      "Medium": 2,
+      "Low": 1
+    };
+
+    return [...predictions].sort((a, b) => {
+      if (predictionsSortKey === "days-asc") {
+        return (a.daysToBreach ?? 9999) - (b.daysToBreach ?? 9999);
+      } else if (predictionsSortKey === "days-desc") {
+        return (b.daysToBreach ?? 0) - (a.daysToBreach ?? 0);
+      } else if (predictionsSortKey === "severity-desc") {
+        const weightA = severityWeight[a.breachSeverity] || 0;
+        const weightB = severityWeight[b.breachSeverity] || 0;
+        if (weightA !== weightB) {
+          return weightB - weightA;
+        }
+        return (a.daysToBreach ?? 9999) - (b.daysToBreach ?? 9999);
+      } else if (predictionsSortKey === "severity-asc") {
+        const weightA = severityWeight[a.breachSeverity] || 0;
+        const weightB = severityWeight[b.breachSeverity] || 0;
+        if (weightA !== weightB) {
+          return weightA - weightB;
+        }
+        return (b.daysToBreach ?? 0) - (a.daysToBreach ?? 0);
+      }
+      return 0;
+    });
   };
 
   return (
@@ -965,9 +1069,113 @@ ${transitionTicket.deltaDependencies}
                 </div>
               </div>
 
+              {/* Findings Status Bar (Active summary of Critical vs Medium findings) */}
+              <div className="bg-white rounded-2xl border border-rich-navy/10 p-5 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-4" id="findings-status-bar">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-red-50 text-red-600 border border-red-100 rounded-xl">
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-400 font-mono block uppercase font-extrabold tracking-wider">
+                      ACTIVE THREAT LEVEL METRIC
+                    </span>
+                    <h4 className="font-display font-medium text-deep-navy text-xs uppercase tracking-tight">
+                      Vulnerability Concentration Status
+                    </h4>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
+                  {/* Critical matches count */}
+                  <div className="flex-1 sm:flex-none flex items-center gap-3 px-4 py-2 bg-red-50/50 border border-red-200/60 rounded-xl min-w-[125px]">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
+                    </span>
+                    <div>
+                      <span className="block text-[8px] uppercase text-red-700 font-mono font-bold tracking-wider leading-none">Critical</span>
+                      <span className="block text-sm font-mono font-bold text-red-900 mt-0.5">
+                        {analysisResult.predictions?.filter((p: any) => p.breachSeverity === "Critical").length || 0} Findings
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Medium matches count */}
+                  <div className="flex-1 sm:flex-none flex items-center gap-3 px-4 py-2 bg-amber-50/50 border border-amber-200/60 rounded-xl min-w-[125px]">
+                    <div className="w-2 h-2 bg-amber-500 rounded-full"></div>
+                    <div>
+                      <span className="block text-[8px] uppercase text-amber-700 font-mono font-bold tracking-wider leading-none">Medium</span>
+                      <span className="block text-sm font-mono font-bold text-amber-900 mt-0.5">
+                        {analysisResult.predictions?.filter((p: any) => p.breachSeverity === "Medium").length || 0} Findings
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="hidden md:flex flex-col text-right font-mono text-[9px] text-slate-400 tracking-wide justify-center h-full pl-2">
+                    <span>SEVERITY DIST: {["Critical", "High", "Medium", "Low"].map(sev => `${sev[0]}:${analysisResult.predictions?.filter((p: any) => p.breachSeverity === sev).length || 0}`).join(" | ")}</span>
+                    <span>TOTAL TARGETS EVALUATED: {analysisResult.predictions?.length || 0} NODES</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Node Gaps Sorting and Controls */}
+              <div className="bg-[#FAFBFD] rounded-2xl border border-rich-navy/10 px-5 py-3.5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 bg-ice-blue border border-accent-blue/20 rounded-lg text-deep-navy">
+                    <ArrowUpDown className="w-4 h-4 text-deep-navy" />
+                  </span>
+                  <div>
+                    <span className="text-[9px] text-slate-400 font-mono block uppercase font-extrabold tracking-wider leading-none">
+                      Active Sorting Matrix
+                    </span>
+                    <span className="text-xs text-deep-navy font-semibold font-sans tracking-tight">
+                      Order: {
+                        predictionsSortKey === "days-asc" ? "Days to Breach (Soonest First)" :
+                        predictionsSortKey === "days-desc" ? "Days to Breach (Furthest First)" :
+                        predictionsSortKey === "severity-desc" ? "Severity (Highest First)" : "Severity (Lowest First)"
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2" id="prediction-sorting-controls">
+                  <span className="text-[10px] text-slate-400 font-mono font-bold uppercase mr-1">Sort by:</span>
+                  
+                  <button
+                    onClick={() => setPredictionsSortKey(prev => prev === "days-asc" ? "days-desc" : "days-asc")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-sans font-bold uppercase transition-all select-none cursor-pointer border ${
+                      predictionsSortKey.startsWith("days-")
+                        ? "bg-deep-navy border-deep-navy text-white shadow-xs"
+                        : "bg-white hover:bg-slate-50 border-rich-navy/15 text-slate-700"
+                    }`}
+                    title="Order nodes by time until anticipated breach"
+                  >
+                    Days To Breach
+                    <span className="font-mono text-[9px] opacity-80">
+                      {predictionsSortKey === "days-asc" ? "▲" : predictionsSortKey === "days-desc" ? "▼" : ""}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setPredictionsSortKey(prev => prev === "severity-desc" ? "severity-asc" : "severity-desc")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-sans font-bold uppercase transition-all select-none cursor-pointer border ${
+                      predictionsSortKey.startsWith("severity-")
+                        ? "bg-deep-navy border-deep-navy text-white shadow-xs"
+                        : "bg-white hover:bg-slate-50 border-rich-navy/15 text-slate-700"
+                    }`}
+                    title="Order nodes by criticality severity classification"
+                  >
+                    Severity
+                    <span className="font-mono text-[9px] opacity-80">
+                      {predictionsSortKey === "severity-desc" ? "▲" : predictionsSortKey === "severity-asc" ? "▼" : ""}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               {/* Node Gaps Countdown Cards */}
               <div className="space-y-6" id="prediction-cards-container">
-                {analysisResult.predictions.map((p: any, idx: number) => {
+                {getSortedPredictions(analysisResult.predictions).map((p: any, idx: number) => {
                   const severityConfig = {
                     Critical: {
                       accent: "text-red-600 bg-red-50 border-red-200",
@@ -1282,6 +1490,55 @@ ${transitionTicket.deltaDependencies}
                 </div>
               </div>
 
+              {/* Findings Status Bar (Active summary of Critical vs Medium findings in comparison) */}
+              <div className="bg-white rounded-2xl border border-rich-navy/10 p-5 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-4" id="compare-findings-status-bar">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-red-50 text-red-600 border border-red-100 rounded-xl">
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-400 font-mono block uppercase font-extrabold tracking-wider">
+                      ACTIVE DRIFT LEVEL METRIC
+                    </span>
+                    <h4 className="font-display font-medium text-deep-navy text-xs uppercase tracking-tight">
+                      Vulnerability Concentration (Incoming Rules)
+                    </h4>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
+                  {/* Critical matches count */}
+                  <div className="flex-1 sm:flex-none flex items-center gap-3 px-4 py-2 bg-red-50/50 border border-red-200/60 rounded-xl min-w-[125px]">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
+                    </span>
+                    <div>
+                      <span className="block text-[8px] uppercase text-red-700 font-mono font-bold tracking-wider leading-none">Critical</span>
+                      <span className="block text-sm font-mono font-bold text-red-900 mt-0.5">
+                        {comparisonResult.predictions?.filter((p: any) => p.newRisk?.severity === "Critical").length || 0} Gaps
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Medium matches count */}
+                  <div className="flex-1 sm:flex-none flex items-center gap-3 px-4 py-2 bg-amber-50/50 border border-amber-200/60 rounded-xl min-w-[125px]">
+                    <div className="w-2 h-2 bg-amber-500 rounded-full"></div>
+                    <div>
+                      <span className="block text-[8px] uppercase text-amber-700 font-mono font-bold tracking-wider leading-none">Medium</span>
+                      <span className="block text-sm font-mono font-bold text-amber-900 mt-0.5">
+                        {comparisonResult.predictions?.filter((p: any) => p.newRisk?.severity === "Medium").length || 0} Gaps
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="hidden md:flex flex-col text-right font-mono text-[9px] text-slate-400 tracking-wide justify-center h-full pl-2">
+                    <span>SEVERITY DIST: {["Critical", "High", "Medium", "Low"].map(sev => `${sev[0]}:${comparisonResult.predictions?.filter((p: any) => p.newRisk?.severity === sev).length || 0}`).join(" | ")}</span>
+                    <span>TOTAL TARGETS DRIFTED: {comparisonResult.predictions?.length || 0} NODES</span>
+                  </div>
+                </div>
+              </div>
+
               {/* Side-by-Side node level results dashboard listing */}
               <div className="space-y-6">
                 <div className="flex items-center gap-2">
@@ -1585,6 +1842,102 @@ ${transitionTicket.deltaDependencies}
 
         </section>
       </main>
+
+      {/* Toast notifications container */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 min-w-[320px] max-w-[420px] pointer-events-auto" id="compliance-pulse-toasts-root">
+        {toasts.map((toast) => {
+          const typeConfig = {
+            critical: {
+              border: "border-red-500 bg-red-50/95",
+              titleColor: "text-red-900",
+              msgColor: "text-red-800",
+              badge: "bg-red-600 text-white",
+              badgeText: "CRITICAL BREACH"
+            },
+            high: {
+              border: "border-amber-500 bg-amber-50/95",
+              titleColor: "text-amber-900",
+              msgColor: "text-amber-800",
+              badge: "bg-amber-600 text-white",
+              badgeText: "HIGH RISK"
+            },
+            medium: {
+              border: "border-yellow-500 bg-yellow-50/95",
+              titleColor: "text-yellow-900",
+              msgColor: "text-yellow-800",
+              badge: "bg-yellow-500 text-white",
+              badgeText: "MEDIUM RISK"
+            },
+            low: {
+              border: "border-blue-400 bg-blue-50/95",
+              titleColor: "text-blue-900",
+              msgColor: "text-blue-800",
+              badge: "bg-blue-600 text-white",
+              badgeText: "LOW RISK"
+            },
+            success: {
+              border: "border-emerald-500 bg-emerald-50/95",
+              titleColor: "text-emerald-900",
+              msgColor: "text-emerald-800",
+              badge: "bg-emerald-600 text-white",
+              badgeText: "SUCCESS"
+            },
+            error: {
+              border: "border-red-400 bg-red-50/95",
+              titleColor: "text-red-900",
+              msgColor: "text-red-800",
+              badge: "bg-red-500 text-white",
+              badgeText: "SYSTEM ERROR"
+            },
+            info: {
+              border: "border-[#1E3A5F] bg-frost-blue/95",
+              titleColor: "text-deep-navy",
+              msgColor: "text-slate-700",
+              badge: "bg-deep-navy text-white",
+              badgeText: "INFO"
+            }
+          }[toast.type] || {
+            border: "border-slate-300 bg-white/95",
+            titleColor: "text-slate-900",
+            msgColor: "text-slate-600",
+            badge: "bg-slate-500 text-white",
+            badgeText: "GENERIC"
+          };
+
+          return (
+            <div
+              key={toast.id}
+              className={`flex flex-col p-4 rounded-xl border shadow-lg backdrop-blur-xs transition-all pointer-events-auto transform duration-300 animate-slide-in relative ${typeConfig.border}`}
+            >
+              <button
+                className="absolute top-3.5 right-3.5 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                onClick={() => removeToast(toast.id)}
+                aria-label="Dismiss toast"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className={`px-2 py-0.5 text-[8px] font-mono font-bold uppercase rounded ${typeConfig.badge}`}>
+                  {typeConfig.badgeText}
+                </span>
+                <span className={`font-sans font-extrabold text-[11px] uppercase tracking-wide pr-5 ${typeConfig.titleColor}`}>
+                  {toast.title}
+                </span>
+              </div>
+
+              <p className={`text-xs font-sans leading-relaxed ${typeConfig.msgColor}`}>
+                {toast.message}
+              </p>
+              
+              {/* Progress bar effect indicating auto-dismiss */}
+              <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/5 overflow-hidden rounded-b-xl">
+                <div className="h-full bg-current opacity-25 animate-shrink" style={{ animationDuration: '7000ms' }}></div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
       {/* Corporate footer block */}
       <Footer />
