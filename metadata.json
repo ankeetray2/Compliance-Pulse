@@ -1,6 +1,6 @@
 {
   "name": "CompliancePulse",
-  "description": "Enterprise regulatory breach prediction engine for SaaS, Cloud, FinTech, and Enterprise IT systems operating under FCA, GDPR, DORA, and EIOPA frameworks.",
+  "description": "Enterprise regulatory breach prediction engine operating under FCA, GDPR, DORA, and EIOPA.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
